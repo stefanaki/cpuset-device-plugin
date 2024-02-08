@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"github.com/stefanaki/cpuset-plugin/pkg/config"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,19 +15,21 @@ import (
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
-const Name = "stefanaki.github.com/cpuset"
+const Vendor = "stefanaki.github.com"
 
 type CPUSetDevicePluginDriver struct {
+	name       string
 	socketFile string
 	grpcServer *grpc.Server
 	state      *State
 	logger     logr.Logger
 }
 
-func NewCPUSetDevicePluginDriver(socketFile string, logger logr.Logger) (*CPUSetDevicePluginDriver, error) {
+func NewCPUSetDevicePluginDriver(name string, socketFile string, logger logr.Logger) (*CPUSetDevicePluginDriver, error) {
 	driver := &CPUSetDevicePluginDriver{
+		name:       name,
 		socketFile: socketFile,
-		logger:     logger.WithName("CPUSetDevicePlugin"),
+		logger:     logger.WithName(fmt.Sprintf("device-%s", name)),
 	}
 	if err := driver.deleteExistingSocket(); err != nil {
 		return nil, fmt.Errorf("failed to delete existing socket: %v", err)
@@ -34,13 +37,13 @@ func NewCPUSetDevicePluginDriver(socketFile string, logger logr.Logger) (*CPUSet
 	if err := driver.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start CPU Device Plugin: %v", err)
 	}
-	if err := driver.Register(Name); err != nil {
+	if err := driver.Register(); err != nil {
 		return nil, fmt.Errorf("failed to register CPU Device Plugin: %v", err)
 	}
 	return driver, nil
 }
 
-func (c CPUSetDevicePluginDriver) Register(resourceName string) error {
+func (c CPUSetDevicePluginDriver) Register() error {
 	conn, err := grpc.Dial(pluginapi.KubeletSocket, grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			d := &net.Dialer{}
@@ -55,7 +58,7 @@ func (c CPUSetDevicePluginDriver) Register(resourceName string) error {
 	request := &pluginapi.RegisterRequest{
 		Version:      pluginapi.Version,
 		Endpoint:     c.socketFile,
-		ResourceName: resourceName,
+		ResourceName: fmt.Sprintf("%s/%s", Vendor, c.name),
 	}
 	if _, err = client.Register(context.Background(), request); err != nil {
 		c.logger.Error(err, "CPU Device Plugin cannot register to Kubelet service")
@@ -112,6 +115,27 @@ func (c CPUSetDevicePluginDriver) deleteExistingSocket() error {
 	pluginEndpoint := filepath.Join(pluginapi.DevicePluginPath, c.socketFile)
 	if err := os.Remove(pluginEndpoint); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	return nil
+}
+
+func CreatePluginsForPools(pools []config.PoolConfig) ([]*CPUSetDevicePluginDriver, error) {
+	poolPlugins := make([]*CPUSetDevicePluginDriver, 0)
+	for _, pool := range pools {
+		poolPlugin, err := NewCPUSetDevicePluginDriver(pool.Name, pool.Name+"-cpus.sock", logr.Discard())
+		if err != nil {
+			return nil, err
+		}
+		poolPlugins = append(poolPlugins, poolPlugin)
+	}
+	return poolPlugins, nil
+}
+
+func StopPlugins(poolPlugins []*CPUSetDevicePluginDriver) error {
+	for _, poolPlugin := range poolPlugins {
+		if err := poolPlugin.Stop(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
