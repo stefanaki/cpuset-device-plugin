@@ -1,11 +1,12 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cpusets
+  name: cpu-pools
   namespace: kube-system
 data:
   minikube: |
-    nodeName: minikube
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
     pools:
     - name: gold-pool-1
       cpus: "0-1"
@@ -14,18 +15,6 @@ data:
       cpus: "2-3"
       exclusive: true
     - name: silver-pool-1
-      cpus: "4-5"
-      exclusive: false
-    - name: silver-pool-2
-      cpus: "6-7"
-      exclusive: false
-  minikube-m02: |
-    nodeName: minikube-m02
-    pools:
-    - name: gold-pool-1
-      cpus: "0-3"
-      exclusive: true
-    - name: silver-pool-1   
       cpus: "4-5"
       exclusive: false
     - name: silver-pool-2

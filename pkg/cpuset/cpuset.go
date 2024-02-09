@@ -9,29 +9,34 @@ import (
 	"path"
 )
 
-type CPUSetsController struct {
-	cgroupsDriver CgroupsDriver
-	cgroupsPath   string
-	logger        logr.Logger
+type CPUSetController struct {
+	cgroupsDriver    CgroupsDriver
+	containerRuntime ContainerRuntime
+	cgroupsPath      string
+	logger           logr.Logger
 }
 
-func NewCPUSetsController(cgroupsDriver CgroupsDriver, cgroupsPath string, logger logr.Logger) (*CPUSetsController, error) {
-	return &CPUSetsController{
-		cgroupsDriver: cgroupsDriver,
-		cgroupsPath:   cgroupsPath,
-		logger:        logger,
-	}, nil
-}
-
-func (c *CPUSetsController) UpdateCPUSet(slice, cpus, mems string) error {
-	if cgroups.Mode() == cgroups.Unified {
-		return c.updateCPUSetV2(slice, cpus, mems)
+func NewCPUSetController(cgroupsDriver CgroupsDriver, containerRuntime ContainerRuntime, cgroupsPath string, logger logr.Logger) *CPUSetController {
+	logger.Info("Cpuset controller initialized", "cgroupsDriver", cgroupsDriver, "containerRuntime", containerRuntime, "cgroupsPath", cgroupsPath)
+	return &CPUSetController{
+		cgroupsDriver:    cgroupsDriver,
+		cgroupsPath:      cgroupsPath,
+		containerRuntime: containerRuntime,
+		logger:           logger,
 	}
-	return c.updateCPUSetV1(slice, cpus, mems)
+}
+
+func (c *CPUSetController) UpdateCPUSet(container ContainerInfo, cpus, mems string) error {
+	sliceName := SliceName(container, c.containerRuntime, c.cgroupsDriver)
+	c.logger.Info("Updating cpuset", "container", container, "cpus", cpus, "slice", sliceName)
+	if cgroups.Mode() == cgroups.Unified {
+		return c.updateCPUSetV2(sliceName, cpus, mems)
+	}
+	return c.updateCPUSetV1(sliceName, cpus, mems)
 }
 
 // updateCPUSetV1 updates cgroups for v1 mode.
-func (c *CPUSetsController) updateCPUSetV1(slice, cpus, mems string) error {
+func (c *CPUSetController) updateCPUSetV1(slice, cpus, mems string) error {
 	ctrl := cgroups.NewCpuset(c.cgroupsPath)
 	err := ctrl.Update(slice, &specs.LinuxResources{
 		CPU: &specs.LinuxCPU{
@@ -50,7 +55,7 @@ func (c *CPUSetsController) updateCPUSetV1(slice, cpus, mems string) error {
 }
 
 // updateCPUSetV2 updates cgroups for v2 (unified) mode.
-func (c *CPUSetsController) updateCPUSetV2(slice, cpus, mems string) error {
+func (c *CPUSetController) updateCPUSetV2(slice, cpus, mems string) error {
 	res := cgroupsv2.Resources{CPU: &cgroupsv2.CPU{
 		Cpus: cpus,
 		Mems: mems,

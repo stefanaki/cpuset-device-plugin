@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: run-parsec-canneal-gcc-n4-c2-native
+  labels:
+    app: benchmark
+    suite: parsec
+    benchmark: canneal
+    build-config: gcc
+    num-threads: "4"
+    num-cpus: "2"
+    input-size: native
+  namespace: benchmarks
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/worker
+                    operator: Exists
+      containers:
+        - name: benchmark
+          image: spirals/parsec-3.0
+          resources:
+            requests:
+              "cpu": "1000m"
+              "stefanaki.github.com/gold-pool-1": "2"
+            limits:
+              "cpu": "1000m"
+              "stefanaki.github.com/gold-pool-1": "2"
+          command:
+            - /bin/bash
+            - "-c"
+            - |
+              ./run \
+              -a run \
+              -p parsec.canneal \
+              -c gcc \
+              -n 4 \
+              -i native && sleep 99999999
+  backoffLimit: 4

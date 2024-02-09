@@ -21,14 +21,17 @@ type CPUSetDevicePluginDriver struct {
 	name       string
 	socketFile string
 	grpcServer *grpc.Server
+	poolConfig config.Pool
 	state      *State
 	logger     logr.Logger
 }
 
-func NewCPUSetDevicePluginDriver(name string, socketFile string, logger logr.Logger) (*CPUSetDevicePluginDriver, error) {
+func NewCPUSetDevicePluginDriver(name string, socketFile string, state *State, poolConfig config.Pool, logger logr.Logger) (*CPUSetDevicePluginDriver, error) {
 	driver := &CPUSetDevicePluginDriver{
 		name:       name,
 		socketFile: socketFile,
+		poolConfig: poolConfig,
+		state:      state,
 		logger:     logger.WithName(fmt.Sprintf("device-%s", name)),
 	}
 	if err := driver.deleteExistingSocket(); err != nil {
@@ -60,6 +63,7 @@ func (c CPUSetDevicePluginDriver) Register() error {
 		Endpoint:     c.socketFile,
 		ResourceName: fmt.Sprintf("%s/%s", Vendor, c.name),
 	}
+
 	if _, err = client.Register(context.Background(), request); err != nil {
 		c.logger.Error(err, "CPU Device Plugin cannot register to Kubelet service")
 		return err
@@ -81,7 +85,12 @@ func (c CPUSetDevicePluginDriver) Start() error {
 	}
 	c.grpcServer = grpc.NewServer()
 	pluginapi.RegisterDevicePluginServer(c.grpcServer, c)
-	go c.grpcServer.Serve(lis)
+	go func() {
+		err := c.grpcServer.Serve(lis)
+		if err != nil {
+			c.logger.Error(err, "CPU Device Plugin server failed")
+		}
+	}()
 
 	conn, err := grpc.DialContext(context.Background(), pluginEndpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -92,10 +101,12 @@ func (c CPUSetDevicePluginDriver) Start() error {
 			return d.DialContext(ctx, "unix", addr)
 		}),
 	)
+
 	if err != nil {
 		c.logger.Error(err, "Could not establish connection with gRPC server")
 		return err
 	}
+
 	c.logger.Info("CPU Device Plugin server started serving")
 	conn.Close()
 
@@ -119,10 +130,10 @@ func (c CPUSetDevicePluginDriver) deleteExistingSocket() error {
 	return nil
 }
 
-func CreatePluginsForPools(pools []config.PoolConfig) ([]*CPUSetDevicePluginDriver, error) {
+func CreatePluginsForPools(pools []config.Pool, logger logr.Logger) ([]*CPUSetDevicePluginDriver, error) {
 	poolPlugins := make([]*CPUSetDevicePluginDriver, 0)
 	for _, pool := range pools {
-		poolPlugin, err := NewCPUSetDevicePluginDriver(pool.Name, pool.Name+"-cpus.sock", logr.Discard())
+		poolPlugin, err := NewCPUSetDevicePluginDriver(pool.Name, pool.Name+"-cpus.sock", pool, logger)
 		if err != nil {
 			return nil, err
 		}

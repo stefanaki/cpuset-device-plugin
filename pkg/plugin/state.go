@@ -2,11 +2,38 @@ package plugin
 
 import (
 	"encoding/json"
+	"github.com/stefanaki/cpuset-plugin/pkg/topology"
 	"os"
+	"sync"
 )
 
 type State struct {
-	Allocations []Allocation `json:"allocations"`
+	Allocations []Allocation       `json:"allocations"`
+	Topology    *topology.Topology `json:"topology"`
+	mutex       sync.Mutex
+}
+
+func (s *State) AddAllocation(allocation Allocation) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.Allocations = append(s.Allocations, allocation)
+}
+
+func (s *State) GetAllocations() []Allocation {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.Allocations
+}
+
+func NewState() (*State, error) {
+	t, err := topology.NewTopology()
+	if err != nil {
+		return nil, err
+	}
+	return &State{
+		Allocations: make([]Allocation, 0),
+		Topology:    t,
+	}, nil
 }
 
 func LoadFromFile(filename string) (*State, error) {

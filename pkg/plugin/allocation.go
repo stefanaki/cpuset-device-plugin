@@ -7,10 +7,10 @@ import (
 type AllocationType string
 
 const (
-	// AllocationTypeExclusive indicates that the resource allocation is exclusive.
-	AllocationTypeExclusive AllocationType = "exclusive"
-	// AllocationTypeShared indicates that the resource allocation is shared.
-	AllocationTypeShared AllocationType = "shared"
+	AllocationTypeSocket AllocationType = "AllocationTypeSocket"
+	AllocationTypeNUMA   AllocationType = "AllocationTypeNUMA"
+	AllocationTypeCore   AllocationType = "AllocationTypeCore"
+	AllocationTypeCPU    AllocationType = "AllocationTypeCPU"
 )
 
 type Allocation struct {

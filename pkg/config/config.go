@@ -9,20 +9,20 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-type NodeCPUConfig struct {
-	NodeName string       `yaml:"nodeName"`
-	Pools    []PoolConfig `yaml:"pools"`
+type PoolConfig struct {
+	NodeSelector map[string]string `yaml:"nodeSelector"`
+	Pools        []Pool            `yaml:"pools"`
 }
 
-type PoolConfig struct {
+type Pool struct {
 	Name      string `yaml:"name"`
-	Cpus      string `yaml:"cpus"`
+	CPUs      string `yaml:"cpus"`
 	Exclusive bool   `yaml:"exclusive"`
 }
 
 type Config struct {
 	client *kubernetes.Clientset
-	NodeCPUConfig
+	PoolConfig
 }
 
 func NewConfig(nodeName string) (*Config, error) {
@@ -30,19 +30,27 @@ func NewConfig(nodeName string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	rawConfig, err := getCPUSetConfigMap(clientset)
 	if err != nil {
 		return nil, err
 	}
-	pools, err := getPoolsForNode(rawConfig, nodeName)
+
+	nodeLabels, err := getNodeLabels(clientset, nodeName)
 	if err != nil {
 		return nil, err
 	}
+
+	pools, nodeSelector, err := getPoolsForNode(rawConfig, nodeLabels)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		client: clientset,
-		NodeCPUConfig: NodeCPUConfig{
-			NodeName: nodeName,
-			Pools:    pools,
+		PoolConfig: PoolConfig{
+			NodeSelector: nodeSelector,
+			Pools:        pools,
 		},
 	}, nil
 }
@@ -51,7 +59,7 @@ func getCPUSetConfigMap(client *kubernetes.Clientset) (map[string]string, error)
 	config, err := client.
 		CoreV1().
 		ConfigMaps("kube-system").
-		Get(context.TODO(), "cpusets", metav1.GetOptions{})
+		Get(context.TODO(), "cpu-pools", metav1.GetOptions{})
 
 	if err != nil {
 		return nil, err
@@ -59,16 +67,32 @@ func getCPUSetConfigMap(client *kubernetes.Clientset) (map[string]string, error)
 	return config.Data, nil
 }
 
-func getPoolsForNode(rawConfig map[string]string, nodeName string) ([]PoolConfig, error) {
+func getNodeLabels(client *kubernetes.Clientset, nodeName string) (map[string]string, error) {
+	node, err := client.
+		CoreV1().
+		Nodes().
+		Get(context.TODO(), nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return node.Labels, nil
+}
+
+func getPoolsForNode(rawConfig map[string]string, nodeLabels map[string]string) ([]Pool, map[string]string, error) {
 	for _, c := range rawConfig {
-		var config NodeCPUConfig
+		var config PoolConfig
 		err := yaml.Unmarshal([]byte(c), &config)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if config.NodeName == nodeName {
-			return config.Pools, nil
+		if config.NodeSelector == nil {
+			return config.Pools, nil, nil
+		}
+		for labelKey, labelVal := range nodeLabels {
+			if val, ok := config.NodeSelector[labelKey]; ok && val == labelVal {
+				return config.Pools, config.NodeSelector, nil
+			}
 		}
 	}
-	return nil, errors.New("no config found for node " + nodeName)
+	return nil, nil, errors.New("no config found for node")
 }
