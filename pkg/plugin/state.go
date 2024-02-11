@@ -8,18 +8,24 @@ import (
 )
 
 type State struct {
-	Allocations []Allocation       `json:"allocations"`
-	Topology    *topology.Topology `json:"topology"`
+	Allocations map[string]Allocation `json:"allocations"`
+	Topology    *topology.Topology    `json:"topology"`
 	mutex       sync.Mutex
 }
 
-func (s *State) AddAllocation(allocation Allocation) {
+func (s *State) AddAllocation(containerID string, allocation Allocation) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.Allocations = append(s.Allocations, allocation)
+	s.Allocations[containerID] = allocation
 }
 
-func (s *State) GetAllocations() []Allocation {
+func (s *State) RemoveAllocation(containerID string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	delete(s.Allocations, containerID)
+}
+
+func (s *State) GetAllocations() map[string]Allocation {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	return s.Allocations
@@ -31,7 +37,7 @@ func NewState() (*State, error) {
 		return nil, err
 	}
 	return &State{
-		Allocations: make([]Allocation, 0),
+		Allocations: make(map[string]Allocation),
 		Topology:    t,
 	}, nil
 }

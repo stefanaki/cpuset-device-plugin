@@ -1,9 +1,5 @@
 package plugin
 
-import (
-	"github.com/stefanaki/cpuset-plugin/pkg/cpuset"
-)
-
 type AllocationType string
 
 const (
@@ -14,7 +10,6 @@ const (
 )
 
 type Allocation struct {
-	Container cpuset.ContainerInfo `json:"container"`
-	CPUs      string               `json:"cpus"`
-	Type      AllocationType       `json:"type"`
+	CPUs string         `json:"cpus"`
+	Type AllocationType `json:"type"`
 }

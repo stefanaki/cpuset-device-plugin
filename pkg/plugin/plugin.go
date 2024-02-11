@@ -2,7 +2,7 @@ package plugin
 
 import (
 	"context"
-	"fmt"
+	"golang.org/x/exp/maps"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 	"k8s.io/utils/cpuset"
 	"strconv"
@@ -21,24 +21,12 @@ func (c CPUSetDevicePluginDriver) ListAndWatch(empty *pluginapi.Empty, server pl
 		Devices: make([]*pluginapi.Device, 0),
 	}
 	for {
-		cpus, err := cpuset.Parse(c.poolConfig.CPUs)
-		if err != nil {
-			return err
-		}
-		for _, cpu := range cpus.List() {
-			if c.poolConfig.Exclusive {
-				response.Devices = append(response.Devices, &pluginapi.Device{
-					ID:     strconv.Itoa(cpu),
-					Health: pluginapi.Healthy,
-				})
-			} else {
-				for i := 0; i < cpus.Size()*1000; i++ {
-					response.Devices = append(response.Devices, &pluginapi.Device{
-						ID:     strconv.Itoa(i),
-						Health: pluginapi.Healthy,
-					})
-				}
-			}
+		allocatableResources := c.getPluginResources()
+		for _, res := range allocatableResources {
+			response.Devices = append(response.Devices, &pluginapi.Device{
+				ID:     strconv.Itoa(res),
+				Health: pluginapi.Healthy,
+			})
 		}
 		if err := server.Send(response); err != nil {
 			return err
@@ -55,26 +43,28 @@ func (c CPUSetDevicePluginDriver) GetPreferredAllocation(ctx context.Context, re
 func (c CPUSetDevicePluginDriver) Allocate(ctx context.Context, request *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	response := &pluginapi.AllocateResponse{}
 	for _, containerRequests := range request.ContainerRequests {
-		fmt.Printf("Container requests: %v\n", containerRequests)
 		deviceIDs := containerRequests.DevicesIDs
 		cpus := cpuset.New()
 		for _, deviceID := range deviceIDs {
-			c, _ := cpuset.Parse(deviceID)
-			cpus = cpus.Union(c)
+			id, _ := strconv.Atoi(deviceID)
+			switch c.allocationType {
+			case AllocationTypeNUMA:
+				cpus = cpus.Union(cpuset.New(c.state.Topology.GetAllCPUsInNUMA(id)...))
+			case AllocationTypeSocket:
+				cpus = cpus.Union(cpuset.New(c.state.Topology.GetAllCPUsInSocket(id)...))
+			case AllocationTypeCore:
+				cpus = cpus.Union(cpuset.New(c.state.Topology.GetAllCPUsInCore(id)...))
+			case AllocationTypeCPU:
+				cpus = cpus.Union(cpuset.New(id))
+			}
 		}
-		println("CPUS ARE", cpus.String())
 		containerEnv := make(map[string]string)
-		if c.poolConfig.Exclusive {
-			containerEnv["CPUSET"] = cpus.String()
-		} else {
-			containerEnv["CPUSET"] = c.poolConfig.CPUs
-		}
-		fmt.Printf("Container env: %v\n", containerEnv)
+		containerEnv["CPUSET"] = cpus.String()
 		response.ContainerResponses = append(response.ContainerResponses, &pluginapi.ContainerAllocateResponse{
 			Envs: containerEnv,
 		})
 	}
-
+	c.logger.Info("response", "res", response)
 	return response, nil
 }
 
@@ -82,3 +72,72 @@ func (c CPUSetDevicePluginDriver) PreStartContainer(ctx context.Context, request
 	//TODO implement me
 	panic("implement me")
 }
+
+func (c CPUSetDevicePluginDriver) getPluginResources() []int {
+	res := make(map[int]struct{})
+	switch c.allocationType {
+	case AllocationTypeNUMA:
+		for node := range c.state.Topology.NUMATopology.Nodes {
+			res[node] = struct{}{}
+		}
+	case AllocationTypeSocket:
+		for socket := range c.state.Topology.CPUTopology.Sockets {
+			res[socket] = struct{}{}
+		}
+	case AllocationTypeCore:
+		for _, socket := range c.state.Topology.CPUTopology.Sockets {
+			for core := range socket.Cores {
+				res[core] = struct{}{}
+			}
+		}
+	case AllocationTypeCPU:
+		for _, socket := range c.state.Topology.CPUTopology.Sockets {
+			for _, core := range socket.Cores {
+				for _, cpu := range core.CPUs.List() {
+					res[cpu] = struct{}{}
+				}
+			}
+		}
+	}
+	return maps.Keys(res)
+}
+
+//
+//func (c CPUSetDevicePluginDriver) getAllocatableResources() []int {
+//	allocations := c.state.GetAllocations()
+//	allocatableResources := c.getPluginResources()
+//	t := c.state.Topology
+//	for _, alloc := range allocations {
+//		cs, _ := cpuset.Parse(alloc.CPUs)
+//		for _, cpuID := range cs.List() {
+//			_, coreID, socketID, numaID := c.state.Topology.GetCPUParentInfo(cpuID)
+//			switch alloc.Type {
+//			case AllocationTypeNUMA:
+//				c.excludeFromAllocatableResources(&allocatableResources, t.GetAllCPUsInNUMA(numaID))
+//			case AllocationTypeSocket:
+//				c.excludeFromAllocatableResources(&allocatableResources, t.GetAllCPUsInSocket(socketID))
+//			case AllocationTypeCore:
+//				c.excludeFromAllocatableResources(&allocatableResources, t.GetAllCPUsInCore(coreID))
+//			case AllocationTypeCPU:
+//				c.excludeFromAllocatableResources(&allocatableResources, []int{cpuID})
+//			}
+//		}
+//	}
+//	return maps.Keys(allocatableResources)
+//}
+//
+//func (c CPUSetDevicePluginDriver) excludeFromAllocatableResources(allocatable *map[int]struct{}, cpus []int) {
+//	for _, cpu := range cpus {
+//		_, coreID, socketID, numaID := c.state.Topology.GetCPUParentInfo(cpu)
+//		switch c.allocationType {
+//		case AllocationTypeNUMA:
+//			delete(*allocatable, numaID)
+//		case AllocationTypeSocket:
+//			delete(*allocatable, socketID)
+//		case AllocationTypeCore:
+//			delete(*allocatable, coreID)
+//		case AllocationTypeCPU:
+//			delete(*allocatable, cpu)
+//		}
+//	}
+//}

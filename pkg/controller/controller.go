@@ -30,6 +30,7 @@ import (
 
 // Controller is responsible for managing the reconciliation and event handling of Pods in Kubernetes.
 type Controller struct {
+	state                  *plugin.State
 	informerFactory        informers.SharedInformerFactory
 	queue                  workqueue.RateLimitingInterface
 	client                 kubernetes.Interface
@@ -42,7 +43,7 @@ type Controller struct {
 }
 
 // NewController creates a new instance of the Controller.
-func NewController(cpusetController *cpuset.CPUSetController, logger logr.Logger) (*Controller, error) {
+func NewController(state *plugin.State, cpusetController *cpuset.CPUSetController, logger logr.Logger) (*Controller, error) {
 	controller := &Controller{}
 
 	// Create the Kubernetes clientset
@@ -76,6 +77,7 @@ func NewController(cpusetController *cpuset.CPUSetController, logger logr.Logger
 		return nil, err
 	}
 
+	controller.state = state
 	controller.informerFactory = informerFactory
 	controller.queue = queue
 	controller.informer = podInformer
@@ -133,12 +135,12 @@ func (c *Controller) processNextItem() bool {
 		c.logger.Info("WARNING: Received shutdown command from queue in thread:" + strconv.Itoa(unix.Gettid()))
 		return false
 	}
-	c.processItemInQueue(obj)
+	c.processNextItemInQueue(obj)
 	return true
 }
 
-// processItemInQueue processes the item in the work queue.
-func (c *Controller) processItemInQueue(obj interface{}) {
+// processNextItemInQueue processes the item in the work queue.
+func (c *Controller) processNextItemInQueue(obj interface{}) {
 	defer c.queue.Done(obj)
 
 	pod, ok := obj.(*corev1.Pod)
@@ -205,9 +207,32 @@ func (c *Controller) handleAddPod(pod *corev1.Pod) {
 }
 
 func (c *Controller) handleUpdatePod(pod *corev1.Pod) {
+	if pod.GetDeletionTimestamp() != nil {
+		c.logger.Info("deletion timestamp found", "name", pod.Name, "deletionTimestamp", pod.GetDeletionTimestamp())
+		c.handleDeletePod(pod)
+		return
+	}
+
 	if c.validatePod(pod) {
 		fmt.Printf("Pod %s updated and added to queue\n", pod.Name)
 		c.queue.Add(pod)
+	}
+}
+
+func (c *Controller) handleDeletePod(pod *corev1.Pod) {
+	if pod.Spec.NodeName != os.Getenv("NODE_NAME") {
+		return
+	}
+
+	for _, container := range pod.Spec.Containers {
+		for resourceName := range container.Resources.Requests {
+			c.logger.Info("resourceName name", "name", resourceName.String())
+			if !strings.Contains(resourceName.String(), plugin.Vendor) {
+				continue
+			}
+			c.state.RemoveAllocation(cpuset.GetContainerInfo(container, *pod).Name)
+			c.logger.Info("Pod deleted", "state", c.state)
+		}
 	}
 }
 
@@ -224,26 +249,46 @@ func (c *Controller) handlePod(pod *corev1.Pod) {
 	}
 
 	for _, container := range pod.Spec.Containers {
+		containerInfo := cpuset.GetContainerInfo(container, *pod)
+		cpus := cpusetutils.New()
+		allocationType := plugin.AllocationTypeCPU
 		for resourceName := range container.Resources.Requests {
-			if strings.Contains(resourceName.String(), plugin.Vendor) {
-				fmt.Printf("Pod %s has %s resource, updating cpuset...\n", pod.Name, resourceName.String())
-				cpus := cpusetutils.New()
-				for _, containerResources := range podResources.GetPodResources().GetContainers() {
-					if containerResources.Name == container.Name {
-						for _, device := range containerResources.GetDevices() {
-							for _, deviceId := range device.GetDeviceIds() {
-								c, _ := cpusetutils.Parse(deviceId)
-								cpus = cpus.Union(c)
-							}
+			if !strings.Contains(resourceName.String(), plugin.Vendor) {
+				continue
+			}
+			for _, containerResources := range podResources.GetPodResources().GetContainers() {
+				if containerResources.Name != container.Name {
+					continue
+				}
+				for _, device := range containerResources.GetDevices() {
+					for _, deviceId := range device.GetDeviceIds() {
+						id, _ := strconv.Atoi(deviceId)
+						if strings.Contains(resourceName.String(), "numa") {
+							cpus = cpus.Union(cpusetutils.New(c.state.Topology.GetAllCPUsInNUMA(id)...))
+							allocationType = plugin.AllocationTypeNUMA
+						} else if strings.Contains(resourceName.String(), "socket") {
+							cpus = cpus.Union(cpusetutils.New(c.state.Topology.GetAllCPUsInSocket(id)...))
+							allocationType = plugin.AllocationTypeSocket
+						} else if strings.Contains(resourceName.String(), "core") {
+							cpus = cpus.Union(cpusetutils.New(c.state.Topology.GetAllCPUsInCore(id)...))
+							allocationType = plugin.AllocationTypeCore
+						} else {
+							cpus = cpus.Union(cpusetutils.New(id))
 						}
 					}
 				}
-				err := c.cpusetController.UpdateCPUSet(cpuset.GetContainerInfo(container, *pod), cpus.String(), "")
-				if err != nil {
-					c.logger.Error(err, "Failed to update cpuset for container", "name", container.Name)
-					return
-				}
 			}
+			mems := c.state.Topology.GetNUMANodesForCPUs(cpus.List())
+			memStr := strings.Trim(strings.Join(strings.Fields(fmt.Sprint(mems)), ","), "[]")
+			err := c.cpusetController.UpdateCPUSet(cpuset.GetContainerInfo(container, *pod), cpus.String(), memStr)
+			if err != nil {
+				c.logger.Error(err, "Failed to update cpuset for container", "name", container.Name)
+				return
+			}
+			c.state.AddAllocation(containerInfo.Name, plugin.Allocation{
+				CPUs: cpus.String(),
+				Type: allocationType,
+			})
 		}
 	}
 }

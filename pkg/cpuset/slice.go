@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// SliceName returns path to container cgroup leaf slice in cgroupfs.
+// SliceName returns path to container cgroups leaf slice in cgroupfs.
 func SliceName(c ContainerInfo, r ContainerRuntime, d CgroupsDriver) string {
 	if r == Kind {
 		return sliceNameKind(c)

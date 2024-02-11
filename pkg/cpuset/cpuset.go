@@ -1,6 +1,7 @@
 package cpuset
 
 import (
+	"fmt"
 	"github.com/containerd/cgroups"
 	cgroupsv2 "github.com/containerd/cgroups/v2"
 	"github.com/go-logr/logr"
@@ -16,19 +17,29 @@ type CPUSetController struct {
 	logger           logr.Logger
 }
 
-func NewCPUSetController(cgroupsDriver CgroupsDriver, containerRuntime ContainerRuntime, cgroupsPath string, logger logr.Logger) *CPUSetController {
+func NewCPUSetController(cgroupsDriver string, containerRuntime string, cgroupsPath string, logger logr.Logger) (*CPUSetController, error) {
 	logger.Info("Cpuset controller initialized", "cgroupsDriver", cgroupsDriver, "containerRuntime", containerRuntime, "cgroupsPath", cgroupsPath)
-	return &CPUSetController{
-		cgroupsDriver:    cgroupsDriver,
-		cgroupsPath:      cgroupsPath,
-		containerRuntime: containerRuntime,
-		logger:           logger,
+
+	driver, err := ParseCgroupsDriver(cgroupsDriver)
+	if err != nil {
+		return nil, fmt.Errorf("supported cgroups driver values are: systemd, cgroupfs")
 	}
+	runtime, err := ParseContainerRuntime(containerRuntime)
+	if err != nil {
+		return nil, fmt.Errorf("supported container runtime values are: containerd, docker, kind")
+	}
+
+	return &CPUSetController{
+		cgroupsDriver:    driver,
+		cgroupsPath:      cgroupsPath,
+		containerRuntime: runtime,
+		logger:           logger,
+	}, nil
 }
 
 func (c *CPUSetController) UpdateCPUSet(container ContainerInfo, cpus, mems string) error {
 	sliceName := SliceName(container, c.containerRuntime, c.cgroupsDriver)
-	c.logger.Info("Updating cpuset", "container", container, "cpus", cpus, "slice", sliceName)
+	c.logger.Info("Updating cpuset", "container", container, "cpus", cpus, "mems", mems, "slice", sliceName)
 	if cgroups.Mode() == cgroups.Unified {
 		return c.updateCPUSetV2(sliceName, cpus, mems)
 	}

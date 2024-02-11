@@ -28,10 +28,10 @@ spec:
           resources:
             requests:
               "cpu": "1000m"
-              "stefanaki.github.com/gold-pool-1": "2"
+              "stefanaki.github.com/core": "2"
             limits:
               "cpu": "1000m"
-              "stefanaki.github.com/gold-pool-1": "2"
+              "stefanaki.github.com/core": "2"
           command:
             - /bin/bash
             - "-c"

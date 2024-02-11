@@ -3,7 +3,6 @@ package plugin
 import (
 	"context"
 	"fmt"
-	"github.com/stefanaki/cpuset-plugin/pkg/config"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,30 +17,24 @@ import (
 const Vendor = "stefanaki.github.com"
 
 type CPUSetDevicePluginDriver struct {
-	name       string
-	socketFile string
-	grpcServer *grpc.Server
-	poolConfig config.Pool
-	state      *State
-	logger     logr.Logger
+	name           string
+	socketFile     string
+	grpcServer     *grpc.Server
+	allocationType AllocationType
+	state          *State
+	logger         logr.Logger
 }
 
-func NewCPUSetDevicePluginDriver(name string, socketFile string, state *State, poolConfig config.Pool, logger logr.Logger) (*CPUSetDevicePluginDriver, error) {
+func NewCPUSetDevicePluginDriver(name string, socketFile string, allocationType AllocationType, state *State, logger logr.Logger) (*CPUSetDevicePluginDriver, error) {
 	driver := &CPUSetDevicePluginDriver{
-		name:       name,
-		socketFile: socketFile,
-		poolConfig: poolConfig,
-		state:      state,
-		logger:     logger.WithName(fmt.Sprintf("device-%s", name)),
+		name:           name,
+		socketFile:     socketFile,
+		allocationType: allocationType,
+		state:          state,
+		logger:         logger.WithName(fmt.Sprintf("device-%s", name)),
 	}
 	if err := driver.deleteExistingSocket(); err != nil {
 		return nil, fmt.Errorf("failed to delete existing socket: %v", err)
-	}
-	if err := driver.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start CPU Device Plugin: %v", err)
-	}
-	if err := driver.Register(); err != nil {
-		return nil, fmt.Errorf("failed to register CPU Device Plugin: %v", err)
 	}
 	return driver, nil
 }
@@ -130,16 +123,47 @@ func (c CPUSetDevicePluginDriver) deleteExistingSocket() error {
 	return nil
 }
 
-func CreatePluginsForPools(pools []config.Pool, logger logr.Logger) ([]*CPUSetDevicePluginDriver, error) {
-	poolPlugins := make([]*CPUSetDevicePluginDriver, 0)
-	for _, pool := range pools {
-		poolPlugin, err := NewCPUSetDevicePluginDriver(pool.Name, pool.Name+"-cpus.sock", pool, logger)
-		if err != nil {
-			return nil, err
-		}
-		poolPlugins = append(poolPlugins, poolPlugin)
+func CreatePluginsForResources(state *State, logger logr.Logger) ([]*CPUSetDevicePluginDriver, error) {
+	plugins := make([]*CPUSetDevicePluginDriver, 0)
+
+	// Create NUMA plugin
+	numaPlugin, err := NewCPUSetDevicePluginDriver("numa", "numa.sock", AllocationTypeNUMA, state, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create plugins: %v", err)
 	}
-	return poolPlugins, nil
+	plugins = append(plugins, numaPlugin)
+
+	// Create Socket plugin
+	socketPlugin, err := NewCPUSetDevicePluginDriver("socket", "socket.sock", AllocationTypeSocket, state, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create plugins: %v", err)
+	}
+	plugins = append(plugins, socketPlugin)
+
+	// Create Core plugin
+	corePlugin, err := NewCPUSetDevicePluginDriver("core", "core.sock", AllocationTypeCore, state, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create plugins: %v", err)
+	}
+	plugins = append(plugins, corePlugin)
+
+	// Create CPU plugin
+	cpuPlugin, err := NewCPUSetDevicePluginDriver("cpu", "cpu.sock", AllocationTypeCPU, state, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create plugins: %v", err)
+	}
+	plugins = append(plugins, cpuPlugin)
+
+	for _, plugin := range plugins {
+		if err := plugin.Start(); err != nil {
+			return nil, fmt.Errorf("failed to start plugin: %v", err)
+		}
+		if err := plugin.Register(); err != nil {
+			return nil, fmt.Errorf("failed to register plugin: %v", err)
+		}
+	}
+
+	return plugins, nil
 }
 
 func StopPlugins(poolPlugins []*CPUSetDevicePluginDriver) error {
