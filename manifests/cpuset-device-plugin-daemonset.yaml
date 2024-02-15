@@ -24,7 +24,7 @@ spec:
         - image: stefanaki/cpuset-device-plugin:0.0.1
           imagePullPolicy: Always
           args:
-#            - "--node-name=$(NODE_NAME)"
+            - "--node-name=$(NODE_NAME)"
             - "--container-runtime=docker"
             - "--cgroups-path=/sys/fs/cgroup"
             - "--cgroups-driver=systemd"

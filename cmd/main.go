@@ -14,13 +14,14 @@ import (
 )
 
 func main() {
-	//var nodeName *string = flag.String("node-name", "minikube", "Name of the node")
+	var nodeName *string = flag.String("node-name", "minikube", "Name of the node")
 	var containerRuntime = flag.String("container-runtime", "docker", "Container Runtime (Default: containerd, Values: containerd, docker, kind)")
 	var cgroupsPath = flag.String("cgroups-path", "/sys/fs/cgroup", "Path to cgroups")
 	var cgroupsDriver = flag.String("cgroups-driver", "systemd", "Set cgroups driver used by kubelet. Values: systemd, cgroupfs")
 	flag.Parse()
 
 	logger := klog.NewKlogr()
+	logger.Info("Starting cpuset plugin", "node-name", *nodeName, "container-runtime", *containerRuntime, "cgroups-path", *cgroupsPath, "cgroups-driver", *cgroupsDriver)
 
 	state, err := plugin.NewState()
 	if err != nil {

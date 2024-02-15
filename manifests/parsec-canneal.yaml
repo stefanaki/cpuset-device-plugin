@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: run-parsec-canneal-gcc-n4-c2-native
+  name: run-parsec-canneal-gcc-n4-c2-native-5
   labels:
     app: benchmark
     suite: parsec
@@ -15,13 +15,6 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: node-role.kubernetes.io/worker
-                    operator: Exists
       containers:
         - name: benchmark
           image: spirals/parsec-3.0

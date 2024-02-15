@@ -9,7 +9,7 @@ import (
 )
 
 func LSCPU() ([]byte, error) {
-	return exec.Command("lscpu", "-p=socket,node,core,cpu", "--online").Output()
+	return exec.Command("/usr/bin/lscpu", "-p=socket,node,core,cpu", "--online").Output()
 }
 
 func ParseTopologyFromLSCPUOutput(output []byte) (*Topology, error) {

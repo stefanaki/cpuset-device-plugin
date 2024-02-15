@@ -14,8 +14,6 @@ import (
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
-const Vendor = "stefanaki.github.com"
-
 type CPUSetDevicePluginDriver struct {
 	name           string
 	socketFile     string
@@ -127,28 +125,28 @@ func CreatePluginsForResources(state *State, logger logr.Logger) ([]*CPUSetDevic
 	plugins := make([]*CPUSetDevicePluginDriver, 0)
 
 	// Create NUMA plugin
-	numaPlugin, err := NewCPUSetDevicePluginDriver("numa", "numa.sock", AllocationTypeNUMA, state, logger)
+	numaPlugin, err := NewCPUSetDevicePluginDriver(string(ResourceNameNUMA), SocketFileNUMA, AllocationTypeNUMA, state, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugins: %v", err)
 	}
 	plugins = append(plugins, numaPlugin)
 
 	// Create Socket plugin
-	socketPlugin, err := NewCPUSetDevicePluginDriver("socket", "socket.sock", AllocationTypeSocket, state, logger)
+	socketPlugin, err := NewCPUSetDevicePluginDriver(string(ResourceNameSocket), SocketFileSocket, AllocationTypeSocket, state, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugins: %v", err)
 	}
 	plugins = append(plugins, socketPlugin)
 
 	// Create Core plugin
-	corePlugin, err := NewCPUSetDevicePluginDriver("core", "core.sock", AllocationTypeCore, state, logger)
+	corePlugin, err := NewCPUSetDevicePluginDriver(string(ResourceNameCore), SocketFileCore, AllocationTypeCore, state, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugins: %v", err)
 	}
 	plugins = append(plugins, corePlugin)
 
 	// Create CPU plugin
-	cpuPlugin, err := NewCPUSetDevicePluginDriver("cpu", "cpu.sock", AllocationTypeCPU, state, logger)
+	cpuPlugin, err := NewCPUSetDevicePluginDriver(string(ResourceNameCPU), SocketFileCPU, AllocationTypeCPU, state, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugins: %v", err)
 	}

@@ -207,31 +207,23 @@ func (c *Controller) handleAddPod(pod *corev1.Pod) {
 }
 
 func (c *Controller) handleUpdatePod(pod *corev1.Pod) {
-	if pod.GetDeletionTimestamp() != nil {
-		c.logger.Info("deletion timestamp found", "name", pod.Name, "deletionTimestamp", pod.GetDeletionTimestamp())
-		c.handleDeletePod(pod)
-		return
-	}
-
 	if c.validatePod(pod) {
-		fmt.Printf("Pod %s updated and added to queue\n", pod.Name)
-		c.queue.Add(pod)
+		if pod.GetDeletionTimestamp() == nil {
+			c.queue.Add(pod)
+		} else {
+			c.logger.Info("PODPODPOD")
+			c.deletePod(pod)
+		}
 	}
 }
 
-func (c *Controller) handleDeletePod(pod *corev1.Pod) {
-	if pod.Spec.NodeName != os.Getenv("NODE_NAME") {
-		return
-	}
-
+func (c *Controller) deletePod(pod *corev1.Pod) {
 	for _, container := range pod.Spec.Containers {
 		for resourceName := range container.Resources.Requests {
-			c.logger.Info("resourceName name", "name", resourceName.String())
 			if !strings.Contains(resourceName.String(), plugin.Vendor) {
 				continue
 			}
-			c.state.RemoveAllocation(cpuset.GetContainerInfo(container, *pod).Name)
-			c.logger.Info("Pod deleted", "state", c.state)
+			c.state.RemoveAllocation(cpuset.GetContainerInfo(container, *pod).ContainerID)
 		}
 	}
 }
@@ -250,8 +242,6 @@ func (c *Controller) handlePod(pod *corev1.Pod) {
 
 	for _, container := range pod.Spec.Containers {
 		containerInfo := cpuset.GetContainerInfo(container, *pod)
-		cpus := cpusetutils.New()
-		allocationType := plugin.AllocationTypeCPU
 		for resourceName := range container.Resources.Requests {
 			if !strings.Contains(resourceName.String(), plugin.Vendor) {
 				continue
@@ -260,16 +250,18 @@ func (c *Controller) handlePod(pod *corev1.Pod) {
 				if containerResources.Name != container.Name {
 					continue
 				}
+				cpus := cpusetutils.New()
+				allocationType := plugin.AllocationTypeCPU
 				for _, device := range containerResources.GetDevices() {
 					for _, deviceId := range device.GetDeviceIds() {
 						id, _ := strconv.Atoi(deviceId)
-						if strings.Contains(resourceName.String(), "numa") {
+						if strings.Contains(resourceName.String(), string(plugin.ResourceNameNUMA)) {
 							cpus = cpus.Union(cpusetutils.New(c.state.Topology.GetAllCPUsInNUMA(id)...))
 							allocationType = plugin.AllocationTypeNUMA
-						} else if strings.Contains(resourceName.String(), "socket") {
+						} else if strings.Contains(resourceName.String(), string(plugin.ResourceNameSocket)) {
 							cpus = cpus.Union(cpusetutils.New(c.state.Topology.GetAllCPUsInSocket(id)...))
 							allocationType = plugin.AllocationTypeSocket
-						} else if strings.Contains(resourceName.String(), "core") {
+						} else if strings.Contains(resourceName.String(), string(plugin.ResourceNameCore)) {
 							cpus = cpus.Union(cpusetutils.New(c.state.Topology.GetAllCPUsInCore(id)...))
 							allocationType = plugin.AllocationTypeCore
 						} else {
@@ -277,18 +269,19 @@ func (c *Controller) handlePod(pod *corev1.Pod) {
 						}
 					}
 				}
+				mems := c.state.Topology.GetNUMANodesForCPUs(cpus.List())
+				memStr := strings.Trim(strings.Join(strings.Fields(fmt.Sprint(mems)), ","), "[]")
+				err := c.cpusetController.UpdateCPUSet(cpuset.GetContainerInfo(container, *pod), cpus.String(), memStr)
+				if err != nil {
+					c.logger.Error(err, "Failed to update cpuset for container", "name", container.Name)
+					return
+				}
+				c.state.AddAllocation(containerInfo.ContainerID, plugin.Allocation{
+					CPUs: cpus.String(),
+					Type: allocationType,
+				})
+				c.logger.Info("STATE", "state", c.state)
 			}
-			mems := c.state.Topology.GetNUMANodesForCPUs(cpus.List())
-			memStr := strings.Trim(strings.Join(strings.Fields(fmt.Sprint(mems)), ","), "[]")
-			err := c.cpusetController.UpdateCPUSet(cpuset.GetContainerInfo(container, *pod), cpus.String(), memStr)
-			if err != nil {
-				c.logger.Error(err, "Failed to update cpuset for container", "name", container.Name)
-				return
-			}
-			c.state.AddAllocation(containerInfo.Name, plugin.Allocation{
-				CPUs: cpus.String(),
-				Type: allocationType,
-			})
 		}
 	}
 }
